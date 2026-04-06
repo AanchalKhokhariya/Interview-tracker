@@ -43,6 +43,16 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True)
     password = db.Column(db.String(200))
 
+class InterviewStats(db.Model):
+    __tablename__ = "interview_stats"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer)
+    total_applications = db.Column(db.Integer)
+    selected = db.Column(db.Integer)
+    rejected = db.Column(db.Integer)
+    interview = db.Column(db.Integer)
+
 with app.app_context():
     db.create_all()
 
@@ -302,6 +312,61 @@ def delete_application(current_user, app_id):
 def logout(current_user):
     session.clear()
     return jsonify({"message": "Logged out successfully"})
+
+def run_etl():
+    users = User.query.all()
+
+    for user in users:
+        apps = list(applications_collection.find({"user_id": user.id}))
+
+        total = len(apps)
+        selected = len([a for a in apps if a.get("status") == "selected"])
+        rejected = len([a for a in apps if a.get("status") == "rejected"])
+        interview = len([a for a in apps if a.get("status") == "interview"])
+
+        InterviewStats.query.filter_by(user_id=user.id).delete()
+
+        stats = InterviewStats(
+            user_id=user.id,
+            total_applications=total,
+            selected=selected,
+            rejected=rejected,
+            interview=interview
+        )
+
+        db.session.add(stats)
+
+    db.session.commit()
+
+@app.route("/run-etl")
+def run_etl_route():
+    run_etl()
+    return {"message": "ETL completed"}
+
+@app.route("/stats")
+@token_required
+def get_stats(current_user):
+    stats = InterviewStats.query.filter_by(user_id=current_user.id).first()
+
+    if not stats:
+        return {"message": "No stats found"}
+
+    total = stats.total_applications
+
+    success_rate = (stats.selected / total) * 100 if total else 0
+    interview_rate = (stats.interview / total) * 100 if total else 0
+    rejection_rate = (stats.rejected / total) * 100 if total else 0
+
+    return {
+        "total": total,
+        "selected": stats.selected,
+        "rejected": stats.rejected,
+        "interview": stats.interview,
+        "success_rate": success_rate,
+        "interview_rate": interview_rate,
+        "rejection_rate": rejection_rate
+    }
+
 
 
 if __name__ == "__main__":
